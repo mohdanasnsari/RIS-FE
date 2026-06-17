@@ -1,0 +1,15 @@
+# Ignore all data files
+*.csv
+*.xlsx
+*.xls
+*.json
+
+# Ignore Python cache and virtual environments
+__pycache__/
+*.pyc
+.venv/
+venv/
+env/
+
+# Ignore environment variables (secrets)
+.env
