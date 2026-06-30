@@ -410,7 +410,6 @@ if os.path.exists(TEMP_DATA_PATH):
                     Daily_Sales=(sales_col, 'sum'),
                     Daily_Volume=('Invoice Number', 'nunique')
                 ).reset_index()
-                # Calculate Daily Average Transaction Value (ATV)
                 incumbent_df['Daily_ATV'] = incumbent_df['Daily_Sales'] / incumbent_df['Daily_Volume']
             else:
                 # Basic grouping for Macro data
@@ -443,7 +442,48 @@ if os.path.exists(TEMP_DATA_PATH):
             m2.metric("Post-Entry Daily Avg", f"₹ {rev_after:,.0f}")
             m3.metric("Overall Revenue Impact", f"{rev_impact:+.1f}%", delta_color="inverse")
 
-            # Render Advanced Invoice Metrics (Only if Invoice Data is present)
+            # --- MACRO ENVIRONMENTAL CHECKS (Inflation & Seasonality) ---
+            # A: Overall Mall Performance
+            mall_daily = mall_df.groupby('Date')[sales_col].sum().reset_index()
+            mall_before = mall_daily[(mall_daily['Date'] >= (entry_date - pd.Timedelta(days=window_days))) & (mall_daily['Date'] < entry_date)]
+            mall_after = mall_daily[(mall_daily['Date'] >= entry_date) & (mall_daily['Date'] <= (entry_date + pd.Timedelta(days=window_days)))]
+            
+            mall_rev_before = mall_before[sales_col].mean() if not mall_before.empty else 0
+            mall_rev_after = mall_after[sales_col].mean() if not mall_after.empty else 0
+            mall_impact = ((mall_rev_after - mall_rev_before) / mall_rev_before) * 100 if mall_rev_before > 0 else 0.0
+
+            # B: Year-Over-Year (YoY) Seasonality Check
+            yoy_start = entry_date - pd.DateOffset(years=1)
+            yoy_end = (entry_date + pd.Timedelta(days=window_days)) - pd.DateOffset(years=1)
+            yoy_df = incumbent_df[(incumbent_df['Date'] >= yoy_start) & (incumbent_df['Date'] <= yoy_end)].copy()
+            
+            yoy_avg = yoy_df['Daily_Sales'].mean() if not yoy_df.empty else 0
+            yoy_impact = ((rev_after - yoy_avg) / yoy_avg) * 100 if yoy_avg > 0 else None
+
+            st.divider()
+            st.markdown("**🌍 Macro-Environmental Checks (Defeating Inflation & Seasonality)**")
+            st.caption("Compare the incumbent's performance against the overall mall trend and their own historical Year-over-Year baseline to uncover the true impact.")
+            
+            c_e1, c_e2, c_e3 = st.columns(3)
+            c_e1.metric("Incumbent Revenue Shift", f"{rev_impact:+.1f}%")
+            c_e2.metric(f"Overall {selected_mall} Shift", f"{mall_impact:+.1f}%")
+            
+            if yoy_impact is not None:
+                c_e3.metric("Incumbent YoY Shift (Seasonality)", f"{yoy_impact:+.1f}%", help=f"Compared to their daily average of ₹{yoy_avg:,.0f} during {yoy_start.strftime('%b %Y')}")
+            else:
+                c_e3.metric("Incumbent YoY Shift", "N/A", help="Not enough historical data from the previous year.")
+                
+            # Automated Intelligence Logic
+            if rev_impact > 0 and mall_impact > rev_impact:
+                st.warning(f"📉 **Hidden Loss:** {incumbent_brand} grew by {rev_impact:.1f}%, but the overall mall grew by {mall_impact:.1f}%. The incumbent actually **lost relative market share** despite making more money (likely due to inflation or seasonal spikes).")
+            elif rev_impact < 0 and mall_impact < rev_impact:
+                st.success(f"🛡️ **Resilience:** {incumbent_brand} dropped by {abs(rev_impact):.1f}%, but the overall mall dropped worse ({abs(mall_impact):.1f}%). The incumbent is actually **outperforming the market** despite the new competitor.")
+            elif rev_impact > 0:
+                st.success(f"📈 **True Growth:** {incumbent_brand} is growing faster than the mall average. The new competitor may have created a 'Halo Effect' drawing more footfall to this specific category.")
+            else:
+                st.error(f"🚨 **True Cannibalization:** The incumbent is shrinking while the mall is not. {entrant_brand} is directly stealing market share.")
+
+            # Conditional Data Output: Invoices (Micro) vs YoY Trend (Macro)
             if has_invoices:
                 vol_before = before_df['Daily_Volume'].mean() if not before_df.empty else 0
                 vol_after = after_df['Daily_Volume'].mean() if not after_df.empty else 0
@@ -479,8 +519,65 @@ if os.path.exists(TEMP_DATA_PATH):
                     st.info("🧠 **Insight:** The competitor is stealing wallet share. Customers are still visiting you just as often, but they are spending less per visit.")
                 elif vol_impact < -5 and atv_impact < -5:
                     st.error("🚨 **Insight:** Severe Cannibalization. The competitor is stealing both your footfall and causing remaining customers to spend less.")
+            else:
+                # MACRO-ONLY FEATURE: YoY Trend Chart
+                st.divider()
+                st.markdown(f"**📅 Year-Over-Year Seasonality Trend: {incumbent_brand}**")
+                
+                # Clearly state what months are being compared
+                st.caption(f"Comparing {incumbent_brand}'s sales following the competitor entry ({entry_date.strftime('%b %Y')}) against the exact same calendar period from the previous year ({yoy_start.strftime('%b %Y')}).")
+                
+                if not yoy_df.empty and not after_df.empty:
+                    yoy_plot = yoy_df.copy().reset_index(drop=True)
+                    after_plot = after_df.copy().reset_index(drop=True)
+                    
+                    yoy_plot['Day_Sequence'] = range(1, len(yoy_plot) + 1)
+                    after_plot['Day_Sequence'] = range(1, len(after_plot) + 1)
+                    
+                    if '7D_Rolling_Avg' not in yoy_plot.columns:
+                        yoy_plot['7D_Rolling_Avg'] = yoy_plot['Daily_Sales'].rolling(window=7, min_periods=1).mean()
+                    
+                    fig_yoy = go.Figure()
+                    
+                    # Update legend to show exact past month/year
+                    fig_yoy.add_trace(go.Scatter(
+                        x=yoy_plot['Day_Sequence'], 
+                        y=yoy_plot['7D_Rolling_Avg'],
+                        mode='lines',
+                        name=f"Previous Year ({yoy_start.strftime('%b %Y')})",
+                        line=dict(color='lightgray', width=2, dash='dash'),
+                        hovertemplate='<b>Day %{x}</b><br>Past Year: ₹%{y:,.0f}<extra></extra>'
+                    ))
+                    
+                    # Update legend to show exact current month/year
+                    fig_yoy.add_trace(go.Scatter(
+                        x=after_plot['Day_Sequence'], 
+                        y=after_plot['7D_Rolling_Avg'],
+                        mode='lines',
+                        name=f"Current Year ({entry_date.strftime('%b %Y')})",
+                        line=dict(color='#f97316', width=3, shape='spline'),
+                        fill='tozeroy',
+                        fillcolor='rgba(249, 115, 22, 0.1)',
+                        hovertemplate='<b>Day %{x}</b><br>Current Year: ₹%{y:,.0f}<extra></extra>'
+                    ))
+                    
+                    # Add specific Brand name to the chart title
+                    fig_yoy.update_layout(
+                        title=f"Seasonality Check: {incumbent_brand}", 
+                        plot_bgcolor='rgba(0,0,0,0)', 
+                        paper_bgcolor='rgba(0,0,0,0)',
+                        xaxis_title="Days Post-Entry (1 to 45)", 
+                        yaxis_title="7-Day Rolling Sales (₹)", 
+                        hovermode="x unified",
+                        xaxis=dict(showgrid=False, showline=True, linewidth=1, linecolor='#e5e7eb'),
+                        yaxis=dict(showgrid=True, gridcolor='#f3f4f6', zeroline=False),
+                        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+                    )
+                    st.plotly_chart(fig_yoy, use_container_width=True, config={'displayModeBar': False})
+                else:
+                    st.info("Insufficient historical data from the previous year to render a Year-Over-Year seasonality chart.")
 
-            # --- PLOTLY CHART ---
+            # --- MAIN PLOTLY CHART ---
             st.divider()
             fig = go.Figure()
             
@@ -602,8 +699,6 @@ if os.path.exists(TEMP_DATA_PATH):
         # ==========================================
         # MANUAL IMPACT SIMULATION: MARKET SHARE ATTRITION
         # ==========================================
-
-
         st.divider()
         st.header("🔮 Manual Simulation: Market Share Attrition")
         st.markdown("Simulate a hypothetical new competitor entering the market and visualize how they dilute the market share of your top brands.")
@@ -775,7 +870,6 @@ if os.path.exists(TEMP_DATA_PATH):
                         m_fig.add_trace(go.Scatter(x=m_pred_df['Day_of_Month'], y=m_pred_df['Diluted_Forecast'], name="Diluted by Competitor", mode='lines', fill='tozeroy', line=dict(color='#f97316')))
                         m_fig.update_layout(title="Future Sales Attrition Curve", plot_bgcolor='rgba(0,0,0,0)', xaxis_title="Day of Month", yaxis_title="Combined Sales (₹)", legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
                         st.plotly_chart(m_fig, use_container_width=True, config={'displayModeBar': False})
-
 
 # !***! !***! !***! !***! !***! !***! !***! !***! !***!
 
